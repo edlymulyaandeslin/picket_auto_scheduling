@@ -15,7 +15,7 @@ if len(students) < 10:
   )
 
 days = ["senin", "selasa", "rabu", "kamis", "jumat"]
-week = 1
+week = "X"
 
 # 2. Acak urutan siswa secara random (supaya tidak urut berdasarkan ID/abjad)
 random.shuffle(students)
