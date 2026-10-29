@@ -125,54 +125,74 @@ def check_week_exists(target_week):
 	finally:
 		conn.close()
 
-def generate_and_save_schedule(target_week=1):
-	"""Mengacak dan menyimpan jadwal piket secara merata ke database"""
-	# 1. Cek duplikasi di database
-	if check_week_exists(target_week):
-		return (
-			f"Gagal: Jadwal untuk Minggu ke-{target_week} sudah ada di database!"
-			" Tidak boleh duplikat."
-		)
+def generate_and_save_schedule(target_week, students_per_day=5):
+	"""Mengacak dan menyimpan jadwal piket, memastikan 5 orang per hari 
+	dan tidak ada student_id yang sama pada hari yang sama (siswa boleh bertugas >1 kali seminggu)."""
 
+	# 1. Cek duplikasi minggu di database
+	if check_week_exists(target_week):
+		return f"❌ Gagal: Jadwal untuk Minggu ke-{target_week} sudah ada di database! Tidak boleh duplikat."
 
 	students = get_students()
-
 	if not students:
-		return "Data siswa kosong!"
+		return "❌ Data siswa kosong!"
 
 	days = ["senin", "selasa", "rabu", "kamis", "jumat"]
-	random.shuffle(students)  # Acak urutan siswa
+	total_slots = len(days) * students_per_day # 5 hari * 5 orang = 25 slot
+
+	# 2. Buat pool siswa dan gandakan jika total siswa kurang dari total slot yang dibutuhkan
+	pool_students = students.copy()
+	while len(pool_students) < total_slots:
+		pool_students.extend(students)
+
+	# 3. Acak urutan pool siswa secara keseluruhan
+	random.shuffle(pool_students)
 
 	conn = get_connection()
 	if not conn:
-		return "Gagal terhubung ke database!"
+		return "❌ Gagal terhubung ke database!"
 
 	try:
 		with conn.cursor() as cursor:
-			chunk_size = len(students) // len(days)  # 10 siswa / 5 hari = 2 orang/hari
-
 			for i, day in enumerate(days):
-				start_idx = i * chunk_size
-				end_idx = start_idx + chunk_size
-				daily_students = students[start_idx:end_idx]
+				# Ambil 5 siswa untuk hari tersebut dari pool yang sudah diacak
+				start_idx = i * students_per_day
+				end_idx = start_idx + students_per_day
+				daily_students = pool_students[start_idx:end_idx]
+
+				# Set untuk memastikan di hari yang SAMA tidak ada student_id yang kembar
+				seen_student_ids = set()
 
 				for student in daily_students:
-					sql = (
-						"INSERT INTO schedules (student_id, week, day) VALUES (%s, %s,"
-						" %s)"
-					)
-					cursor.execute(sql, (student["id"], target_week, day))
+					s_id = student["id"]
+
+					# Jika dalam 1 hari yang sama id-nya sudah masuk, cari pengganti dari sisa pool
+					# (Mencegah duplikat internal pada hari tersebut)
+					while s_id in seen_student_ids:
+						# Ambil elemen acak lain dari pool utama untuk mengganti yang duplikat
+						replacement = random.choice(pool_students)
+						while replacement["id"] in seen_student_ids:
+							replacement = random.choice(pool_students)
+						student = replacement
+						s_id = student["id"]
+
+					seen_student_ids.add(s_id)
+
+					sql = "INSERT INTO schedules (student_id, week, day) VALUES (%s, %s, %s)"
+					cursor.execute(sql, (s_id, target_week, day))
 
 			conn.commit()
-			# Panggil fungsi get_schedule_by_week untuk langsung menampilkan hasilnya
-			success_msg = f"🎉 Sukses! Jadwal piket untuk Minggu ke-{target_week} berhasil dibuat & disimpan."
+
+			success_msg = f"🎉 Sukses! Jadwal Minggu ke-{target_week} ({students_per_day} orang/hari) berhasil dibuat & disimpan."
 			details = get_schedule_by_week(target_week)
 			return f"{success_msg}\n{details}"
+
 	except Exception as e:
 		conn.rollback()
-		return f"Terjadi error: {e}"
+		return f"❌ Terjadi error: {e}"
 	finally:
- 		conn.close()
+		conn.close()
+
 
 def get_schedule_by_week(target_week):
 	"""Mengambil dan menampilkan jadwal piket berdasarkan nomor minggu"""
